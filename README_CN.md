@@ -237,5 +237,11 @@ MIT — 打造更好的技能，自由分享。
 ---
 
 <p align="center">
+  <a href="README.md">English</a> | <b>中文</b>
+</p>
+
+---
+
+<p align="center">
   <a href="https://github.com/SunJ1ayu/skillify-auditor">English</a> | <b>中文</b>
 </p>
