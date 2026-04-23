@@ -233,3 +233,9 @@ MIT — Build better skills, share freely.
 > *"The goal isn't perfect code. The goal is **code that knows when it's imperfect** and tells you how to fix it."*
 
 **Start auditing. Start shipping.** 🚀
+
+---
+
+<p align="center">
+  <b>English</b> | <a href="README_CN.md">中文</a>
+</p>
