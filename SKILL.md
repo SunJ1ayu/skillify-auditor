@@ -2,14 +2,14 @@
 name: skillify-auditor
 description: "Garry Tan 的 Skillify 10-step 审计工具。评估任意 skill 的完成度，发现缺失项，生成修复清单。触发词：skillify审计、审计skill、检查skill、10步检查、Garry Tan审计、skill质量检查。"
 triggers:
-  - keyword: "skillify审计"
-  - keyword: "审计skill"
-  - keyword: "检查skill"
-  - keyword: "10步检查"
-  - keyword: "Garry Tan审计"
-  - keyword: "skill质量检查"
-  - keyword: "评估skill"
-  - keyword: "skill完善度"
+  - "skillify审计"
+  - "审计skill"
+  - "检查skill"
+  - "10步检查"
+  - "Garry Tan审计"
+  - "skill质量检查"
+  - "评估skill"
+  - "skill完善度"
 boundaries:
   - "只审计 skills/ 目录下的 skill"
   - "不修改被审计的 skill 文件（只生成报告）"
@@ -40,7 +40,7 @@ boundaries:
 | 4 | **集成测试** | tests/integration/ 端到端 | 10% |
 | 5 | **LLM Evals** | tests/evals/ 质量评估 | 10% |
 | 6 | **Resolver** | AGENTS.md 路由配置 | 15% |
-| 7 | **Resolver Evals** | tests/resolver/ 触发器测试 | 5% |
+| 7 | **Resolver Evals** | 触发词覆盖率测试（实质化） | 5% |
 | 8 | **Check Resolvable** | 可解析性 + DRY 审计 | 10% |
 | 9 | **E2E 测试** | tests/e2e/ 冒烟测试 | 10% |
 | 10 | **Brain Filing** | references/ 或归档规范 | 5% |
@@ -115,6 +115,27 @@ boundaries:
 6. 可选：自动生成缺失文件
 ```
 
+## Step 7: Resolver Evals（实质化）
+
+与其他步骤不同，Step 7 实现了**实质化路由测试**：
+
+1. **提取 SKILL.md 触发词** - 解析技能定义的所有触发词
+2. **提取 AGENTS.md 路由** - 解析实际配置的路由触发词
+3. **计算覆盖率** - `有路由的触发词 / 总触发词`
+4. **识别缺口** - 报告未覆盖的触发词列表
+5. **评分** - 文件存在(2分) + 覆盖率≥80%(2分) + 测试质量(1分)
+
+### 示例输出
+
+```
+步骤 7 | Resolver Evals | 部分通过 | 3/5
+├── 测试文件: 2 个 ✅
+├── 触发词覆盖率: 6/10 (60%) ⚠️
+└── 未覆盖触发词: 优化代码, 审查方案 ❌
+```
+
+**通过标准**: 覆盖率 ≥ 80%
+
 ## 与 Garry Tan 原版的区别
 
 | 特性 | Garry Tan 原版 | Skillify Auditor |
@@ -123,6 +144,7 @@ boundaries:
 | 输出 | 完整 skill 包 | 审计报告 + 修复建议 |
 | 自动化 | 半自动 | 全自动审计 |
 | 适用范围 | GBrain | OpenClaw |
+| **Step 7 深度** | 实际路由测试 | **触发词覆盖率统计** |
 
 ## 边界
 

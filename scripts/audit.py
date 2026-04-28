@@ -14,6 +14,7 @@ Skillify Auditor - Garry Tan 10-step 审计工具
 
 import os
 import sys
+import re
 import json
 import argparse
 from pathlib import Path
@@ -243,33 +244,58 @@ class SkillifyAuditor:
                  "PASS" if test_files else "FAIL")
     
     def check_step_5_llm_evals(self):
-        """步骤 5: LLM Evals"""
+        """步骤 5: LLM Evals (真正的 LLM-as-judge)"""
         evals_dir = self.skill_dir / 'tests' / 'evals'
         
+        # 基础分：检查 evals 目录存在
         if not evals_dir.exists():
+            base_score = 0
+        else:
+            eval_files = list(evals_dir.glob('*.py'))
+            base_score = min(5, len(eval_files) * 2)  # 文件存在给基础分
+        
+        # 真正的 LLM-as-judge 评估
+        try:
+            from llm_evals import run_llm_evals, print_llm_eval_report
+            
+            self.log("🤖 正在运行 LLM-as-Judge 深度评估...", "INFO")
+            llm_report = run_llm_evals(self.skill_name, self.skill_dir)
+            
+            # LLM 评估分数占主要权重
+            llm_score = llm_report.overall_score
+            # 总分 = 基础分(最高5分) + LLM评估分(最高5分)
+            final_score = min(10, base_score // 2 + llm_score // 20)
+            
+            details = f"LLM-as-Judge: {llm_score}/100 | 基础检查: {base_score}/5"
+            
             self.results.append(StepResult(
-                step=5, name="LLM Evals", passed=False,
-                score=0, max_score=10,
-                details="tests/evals/ 不存在",
-                missing_files=['tests/evals/']
+                step=5, name="LLM Evals (LLM-as-Judge)", passed=llm_score >= 60,
+                score=final_score, max_score=10,
+                details=details,
+                missing_files=[] if llm_score >= 60 else ['需要提升 LLM 评估维度']
             ))
-            self.log("❌ 步骤 5: tests/evals/ 不存在", "FAIL")
-            return
-        
-        eval_files = list(evals_dir.glob('*.py'))
-        score = min(10, len(eval_files) * 5)
-        
-        details = f"tests/evals/ 存在: {len(eval_files)} 个评估文件"
-        
-        self.results.append(StepResult(
-            step=5, name="LLM Evals", passed=len(eval_files) > 0,
-            score=score, max_score=10,
-            details=details,
-            missing_files=[]
-        ))
-        
-        self.log(f"{'✅' if eval_files else '❌'} 步骤 5: {details}",
-                 "PASS" if eval_files else "FAIL")
+            
+            self.log(f"{'✅' if llm_score >= 60 else '⚠️'} 步骤 5: {details}",
+                     "PASS" if llm_score >= 60 else "WARN")
+            
+            # 打印详细报告
+            print_llm_eval_report(llm_report)
+            
+        except Exception as e:
+            # LLM 评估失败，回退到基础检查
+            self.log(f"⚠️ LLM 评估失败 ({e})，回退到基础检查", "WARN")
+            
+            details = f"基础检查: {base_score}/5 (LLM 评估失败)"
+            
+            self.results.append(StepResult(
+                step=5, name="LLM Evals", passed=base_score > 0,
+                score=base_score, max_score=10,
+                details=details,
+                missing_files=['需要实现 LLM-as-judge']
+            ))
+            
+            self.log(f"{'✅' if base_score > 0 else '❌'} 步骤 5: {details}",
+                     "PASS" if base_score > 0 else "FAIL")
     
     def check_step_6_resolver(self):
         """步骤 6: Resolver"""
@@ -306,33 +332,202 @@ class SkillifyAuditor:
                  "PASS" if passed_sections == len(required) else "WARN")
     
     def check_step_7_resolver_evals(self):
-        """步骤 7: Resolver Evals"""
+        """步骤 7: Resolver Evals - 实质化路由测试"""
         resolver_dir = self.skill_dir / 'tests' / 'resolver'
         
+        # 1. 检查测试目录和文件
         if not resolver_dir.exists():
-            self.results.append(StepResult(
-                step=7, name="Resolver Evals", passed=False,
-                score=0, max_score=5,
-                details="tests/resolver/ 不存在",
-                missing_files=['tests/resolver/']
-            ))
-            self.log("❌ 步骤 7: tests/resolver/ 不存在", "FAIL")
-            return
+            has_test_files = False
+            test_file_count = 0
+        else:
+            test_files = list(resolver_dir.glob('test_*.py'))
+            has_test_files = len(test_files) > 0
+            test_file_count = len(test_files)
         
-        test_files = list(resolver_dir.glob('test_*.py'))
-        score = min(5, len(test_files) * 3)
+        # 2. 解析 SKILL.md 提取触发词
+        skill_triggers = self._extract_skill_triggers(self.skill_dir / 'SKILL.md')
         
-        details = f"tests/resolver/ 存在: {len(test_files)} 个测试文件"
+        # 3. 解析 AGENTS.md 提取路由触发词
+        agents_triggers = self._extract_agents_triggers()
+        
+        # 4. 计算覆盖率
+        covered_triggers = set()
+        uncovered_triggers = []
+        
+        for trigger in skill_triggers:
+            if trigger in agents_triggers:
+                covered_triggers.add(trigger)
+            else:
+                uncovered_triggers.append(trigger)
+        
+        coverage = len(covered_triggers) / len(skill_triggers) * 100 if skill_triggers else 0
+        
+        # 5. 检查测试文件内容质量
+        test_quality = 0
+        if has_test_files:
+            for test_file in test_files:
+                content = test_file.read_text(encoding='utf-8')
+                # 检查是否有实际的测试逻辑（不只是占位符）
+                if 'assert' in content and 'def test_' in content:
+                    test_quality += 1
+        
+        # 6. 计算得分
+        # 基础分：有测试文件 (最高 2 分)
+        base_score = min(2, test_file_count)
+        # 覆盖率分：触发词覆盖率 (最高 2 分)
+        coverage_score = int(coverage / 50)  # 100% = 2 分
+        # 质量分：测试文件质量 (最高 1 分)
+        quality_score = 1 if test_quality >= test_file_count and test_file_count > 0 else 0
+        
+        score = min(5, base_score + coverage_score + quality_score)
+        
+        # 7. 生成详细报告
+        details_parts = [
+            f"测试文件: {test_file_count} 个",
+            f"触发词覆盖率: {len(covered_triggers)}/{len(skill_triggers)} ({coverage:.0f}%)",
+        ]
+        
+        if uncovered_triggers:
+            details_parts.append(f"未覆盖触发词: {', '.join(uncovered_triggers[:3])}")
+        
+        details = " | ".join(details_parts)
+        
+        # 8. 判断是否通过（覆盖率 >= 80% 且有测试文件）
+        passed = coverage >= 80 and has_test_files
+        
+        missing = []
+        if not has_test_files:
+            missing.append('tests/resolver/ 目录和测试文件')
+        if coverage < 100:
+            missing.append(f'{len(uncovered_triggers)} 个触发词缺少路由测试')
         
         self.results.append(StepResult(
-            step=7, name="Resolver Evals", passed=len(test_files) > 0,
+            step=7, name="Resolver Evals", passed=passed,
             score=score, max_score=5,
             details=details,
-            missing_files=[]
+            missing_files=missing if missing else []
         ))
         
-        self.log(f"{'✅' if test_files else '❌'} 步骤 7: {details}",
-                 "PASS" if test_files else "FAIL")
+        self.log(f"{'✅' if passed else '⚠️'} 步骤 7: {details}",
+                 "PASS" if passed else "WARN")
+    
+    def _extract_skill_triggers(self, skill_md_path: Path) -> List[str]:
+        """从 SKILL.md 提取触发词"""
+        if not skill_md_path.exists():
+            return []
+
+        content = skill_md_path.read_text(encoding='utf-8')
+        triggers = []
+
+        # 方法1: 从 YAML frontmatter 提取（在 triggers: 和 boundaries: 之间）
+        if content.startswith('---'):
+            end = content.find('---', 3)
+            if end > 0:
+                frontmatter = content[3:end].strip()
+                # 找到 triggers 部分，提取列表项
+                triggers_match = re.search(r'^triggers:\s*\n((?:\s*-\s+.+\n)+)', frontmatter, re.MULTILINE)
+                if triggers_match:
+                    triggers_text = triggers_match.group(1)
+                    trigger_matches = re.findall(r'^\s+-\s+["\']([^"\']+)["\']', triggers_text, re.MULTILINE)
+                    triggers.extend(trigger_matches)
+                # 匹配 - keyword: "xxx" 格式
+                keyword_matches = re.findall(r'keyword:\s*["\']([^"\']+)["\']', triggers_text if triggers_match else frontmatter, re.MULTILINE)
+                triggers.extend(keyword_matches)
+
+        # 方法2: 从 ## 触发词 章节提取
+        trigger_section = re.search(r'##\s*触发词.*?(?=##|\Z)', content, re.DOTALL | re.IGNORECASE)
+        if trigger_section:
+            section_content = trigger_section.group(0)
+            # 匹配列表项
+            list_matches = re.findall(r'^\s*[-*]\s*(.+)', section_content, re.MULTILINE)
+            for match in list_matches:
+                trigger = match.strip()
+                if trigger and len(trigger) < 50:  # 过滤掉长段落
+                    triggers.append(trigger)
+
+        return triggers
+    
+    def _extract_agents_triggers(self) -> set:
+        """从 AGENTS.md 提取路由触发词"""
+        agents_md = self.skill_dir / 'AGENTS.md'
+        if not agents_md.exists():
+            return set()
+        
+        content = agents_md.read_text(encoding='utf-8')
+        triggers = set()
+        
+        # 方法1: 从 YAML frontmatter 提取 triggers
+        if content.startswith('---'):
+            end = content.find('---', 3)
+            if end > 0:
+                frontmatter = content[3:end].strip()
+                # 匹配 triggers 列表
+                trigger_matches = re.findall(r'["\']([^"\']+)["\']\s*:\s*\n\s*route:', frontmatter)
+                triggers.update(trigger_matches)
+                # 匹配 - keyword: "xxx" 格式
+                keyword_matches = re.findall(r'keyword:\s*["\']([^"\']+)["\']', frontmatter)
+                triggers.update(keyword_matches)
+                # 匹配 - "xxx" 格式
+                simple_matches = re.findall(r'^\s+-\s+["\']([^"\']+)["\']', frontmatter, re.MULTILINE)
+                triggers.update(simple_matches)
+        
+        # 方法2: 从 ## 路由表 章节提取
+        route_section = re.search(r'##\s*路由表.*?(?=##|\Z)', content, re.DOTALL)
+        if route_section:
+            section_text = route_section.group(0)
+            # 按行分割，跳过标题行和分隔行
+            lines = section_text.split('\n')
+            header_found = False
+            for line in lines:
+                line = line.strip()
+                # 跳过空行
+                if not line:
+                    continue
+                # 找到标题行后，下一行是分隔符，然后开始解析数据行
+                if '|' in line and ('意图' in line or '触发词' in line):
+                    header_found = True
+                    continue
+                # 跳过分隔行 |---|---|
+                if header_found and '---' in line and '|' in line:
+                    continue
+                # 解析数据行 | 触发词 | 路由 | ...
+                if header_found and line.startswith('|'):
+                    # 提取第一列（触发词）
+                    cols = line.split('|')
+                    if len(cols) >= 2:
+                        trigger = cols[1].strip()
+                        # 过滤掉标题和空值
+                        if trigger and trigger not in ['意图', '触发词', '说明', '---', '']:
+                            triggers.add(trigger)
+        
+        # 方法3: 从 ## 触发器详情 章节提取（注意：只匹配 ## 开头的新章节，不匹配 ###）
+        trigger_section = re.search(r'##\s*触发器详情(.*?)(?=\n## |\Z)', content, re.DOTALL)
+        if trigger_section:
+            section_text = trigger_section.group(0)
+            # 匹配 **触发词**: xxx 格式
+            trigger_lines = re.findall(r'\*\*触发词\*\*[:：]\s*(.+)', section_text)
+            for line in trigger_lines:
+                # 支持顿号、逗号分隔
+                for sep in ['、', ',', '，']:
+                    if sep in line:
+                        parts = line.split(sep)
+                        for part in parts:
+                            trigger = part.strip()
+                            if trigger and len(trigger) < 30:
+                                triggers.add(trigger)
+                        break
+                else:
+                    # 没有分隔符，整个作为触发词
+                    trigger = line.strip()
+                    if trigger and len(trigger) < 30:
+                        triggers.add(trigger)
+            # 匹配 ### 触发词名（作为备选）
+            section_matches = re.findall(r'###\s*(.+)', section_text)
+            for match in section_matches:
+                if '触发词' not in match and len(match) < 30:
+                    triggers.add(match.strip())
+
+        return triggers
     
     def check_step_8_check_resolvable(self):
         """步骤 8: Check Resolvable"""
@@ -509,6 +704,15 @@ def audit_skill(skill_name: str, fix_mode: bool = False):
     auditor = SkillifyAuditor(skill_name, fix_mode)
     report = auditor.audit()
     auditor.print_report(report)
+    
+    # 如果启用 fix 模式，运行自动修复
+    if fix_mode:
+        from auto_fix import AutoFixer, print_fix_report
+        skill_dir = SKILLS_DIR / skill_name
+        fixer = AutoFixer(skill_dir, skill_name)
+        fix_results = fixer.fix_all(report.steps)
+        print_fix_report(fix_results)
+    
     return report
 
 
